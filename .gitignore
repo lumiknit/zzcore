@@ -1,0 +1,6 @@
+*.out
+TEST*
+OUT*
+*.o
+*.a
+*.so
