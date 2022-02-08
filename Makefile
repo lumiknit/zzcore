@@ -1,11 +1,16 @@
 CC = gcc
 RM = rm
-COPT = -O1 -g0
+COPT = -O0 -g
+
+TESTS = \
+	test00.out \
+	test01.out \
+	test02.out
 
 .PHONY: all clean
-all: test0.out
+all: $(TESTS)
 clean:
 	$(RM) *.o *.out
 
-test0.out: test0.c zzcore.c
+test%.out: tests/test%.c zzcore.c
 	$(CC) -o $@ $(COPT) $^

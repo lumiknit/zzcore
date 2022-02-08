@@ -17,7 +17,21 @@ writeFile = function(path, content)
   end
 end
 
-local h = readFile("./zzcore.h")
-local c = readFile("./zzcore.c")
-local result = string.gsub(c, "#include \"zzcore.h\"", h)
-writeFile("zzcore_min.c", result)
+replaceHeader = function(src, hd)
+  return src:gsub("#include \"zzcore.h\"", hd)
+end
+
+removeComments = function(src)
+  return src:gsub("/%*.*%*/", "[ERR]")
+            :gsub("//[^\n]*\n", "\n")
+end
+
+reduce = function(src)
+  return src:gsub("\n%s*\n", "\n")
+end
+
+h = readFile("./zzcore.h")
+c = readFile("./zzcore.c")
+t = removeComments(replaceHeader(c, h))
+t = reduce(t)
+writeFile("zzcore_min.c", t)

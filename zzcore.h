@@ -33,17 +33,29 @@ struct ZZTup {
 
 struct ZZGC;
 
-ZZGC* ZZ_newGC(size_t);
+// GC APIs
+ZZGC* ZZ_newGC(size_t /* root size */, size_t /* minor heap size */);
 void ZZ_delGC(ZZGC*);
-
-ZZTup* ZZ_alloc(ZZGC*, size_t n_slots);
-int ZZ_minorGC(ZZGC*);
-int ZZ_majorGC(ZZGC*);
-
+// Set Options
+void ZZ_setMinMajorHeapSize(ZZGC*, size_t /* min major heap size */);
+// Allocation
+ZZTup* ZZ_alloc(ZZGC*, size_t /* # of slots */);
+// run gc
+int ZZ_runGC(ZZGC*);
+// GC Helpers
 ZZTup* ZZ_root(ZZGC*);
 ZZTup* ZZ_frame(ZZGC*);
-ZZTup* ZZ_pushFrame(ZZGC*, size_t frame_size);
+ZZTup* ZZ_pushFrame(ZZGC*, size_t /* # of slots in a frame */);
 int ZZ_popFrame(ZZGC*);
+// GC Information
+size_t ZZ_nGen(ZZGC*);
+size_t ZZ_reservedSlots(ZZGC*, int /* idx of gen, -1 for whole slots */);
+size_t ZZ_leftSlots(ZZGC*, int /* idx of gen, -1 for whold slots */);
+size_t ZZ_allocatedSlots(ZZGC*, int /* idx of gen, -1 for whold slots */);
+// For tests
+void ZZ_printGCStatus(ZZGC*, size_t *dst);
+
+// Helpers
 
 struct ZZStr {
   size_t len;

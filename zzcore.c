@@ -1,3 +1,5 @@
+#include <assert.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,6 +19,8 @@ typedef struct ZZGen {
   void *p; // start position of marks+data, used only for free
   ZZMark *marks;
   ZZCell *cells;
+  // Only for GC
+  size_t n_reachables;
 } ZZGen;
 
 static ZZGen* newGen(size_t size) {
@@ -67,19 +71,19 @@ static void delGen(ZZGen *J) {
 #define markUpdColor(m, v) (markNColor(m) | markToColor(v))
 #define markUpdSize(m, v) (markNSize(m) | markToSize(v))
 #define markConstr(p, c, s) (markToIsPtr(p) | markToColor(c) | markToSize(s))
-#define colorFree 0x00
-#define colorWhite 0x10
-#define colorBlack 0x11
-#define colorGray 0x01
+#define COLOR_FREE 0x00
+#define COLOR_WHITE 0x10
+#define COLOR_BLACK 0x11
+#define COLOR_GRAY 0x01
 
-static ZZTup* allocGen(ZZGen *J, const size_t slots) {
+static ZZTup* allocTup(ZZGen *J, const size_t slots) {
   const size_t n = slots + 1; // tag(1) + slots
   if(n >= 1024 || J->left < n) return NULL;
   J->left -= n;
   ZZTup* const ptr = (ZZTup*) (J->cells + J->left);
-  const ZZMark m_left = markConstr(1, colorFree, 0);
-  const ZZMark m_2nd = markConstr(1, colorFree, slots >> 5);
-  const ZZMark m_1st = markConstr(1, colorBlack, slots & 0x1f);
+  const ZZMark m_left = markConstr(1, COLOR_FREE, 0);
+  const ZZMark m_2nd = markConstr(1, COLOR_FREE, slots >> 5);
+  const ZZMark m_1st = markConstr(1, COLOR_BLACK, slots & 0x1f);
   size_t idx = J->left;
   J->marks[idx] = m_1st;
   if(n >= 1) {
@@ -93,7 +97,7 @@ static ZZTup* allocGen(ZZGen *J, const size_t slots) {
 static size_t ptrSizeAtIdx(ZZGen *J, const size_t idx) {
   const ZZMark m_1st = J->marks[idx];
   const ZZMark m_2nd = (idx < J->size) ? J->marks[idx + 1] : 0x00;
-  if(markIsPtr(m_1st) || markColor(m_1st) == colorFree) return 0;
+  if(markIsPtr(m_1st) || markColor(m_1st) == COLOR_FREE) return 0;
   size_t s = markSize(m_1st);
   if(markIsPtr(m_2nd)) {
     s |= markSize(m_2nd) << 5;
@@ -108,13 +112,17 @@ static size_t ptrSize(ZZGen *J, void *p) {
 }
 
 struct ZZGC {
+  // Options
+  size_t minor_heap_size;
+  size_t min_major_heap_size;
+  // Data
   size_t sz_gens, n_gens;
   ZZGen **gens;
   ZZTup *root;
 };
 
-static int pushNewGCGen(ZZGC *G) {
-  if(G->sz_gens >= G->n_gens) {
+static int pushNewGCGen(ZZGC *G, size_t least_size) {
+  if(G->sz_gens <= G->n_gens) {
     const size_t nsz= G->sz_gens * 2;
     ZZGen** new_arr = (ZZGen**) realloc(G->gens, nsz);
     if(new_arr == NULL) return -1;
@@ -122,8 +130,12 @@ static int pushNewGCGen(ZZGC *G) {
     G->sz_gens = nsz;
   }
   const size_t prev_size =
-    G->n_gens > 1 ? G->gens[G->n_gens - 1]->size : ZZ_MAJOR_HEAP_MIN_SIZE;
-  G->gens[G->n_gens++] = newGen(prev_size * 2);
+    G->n_gens > 1 ? G->gens[G->n_gens - 1]->size : G->min_major_heap_size;
+  const size_t new_size =
+    least_size < prev_size * 2 ? prev_size * 2 : least_size;
+  ZZGen *j = newGen(new_size);
+  if(j == NULL) return -1;
+  G->gens[G->n_gens++] = j;
   return 0;
 }
 
@@ -136,13 +148,17 @@ static void delGCGen(ZZGC *G, size_t idx) {
   G->gens[--G->n_gens] = NULL;
 }
 
-ZZGC* ZZ_newGC(size_t root_size) {
+ZZGC* ZZ_newGC(size_t root_size, size_t minor_heap_size) {
   ZZGC *G = (ZZGC*) malloc(sizeof(ZZGC));
+  G->minor_heap_size = ZZ_MINOR_HEAP_SIZE;
+  if(minor_heap_size > 0) G->minor_heap_size = minor_heap_size;
+  G->min_major_heap_size = ZZ_MAJOR_HEAP_MIN_SIZE;
   G->sz_gens = 4;
   G->n_gens = 1;
   G->gens = (ZZGen**) malloc(sizeof(ZZGen*) * G->sz_gens);
-  G->gens[0] = newGen(ZZ_MINOR_HEAP_SIZE);
+  G->gens[0] = newGen(G->minor_heap_size);
   G->root = (ZZTup*) malloc(sizeof(ZZTup) + sizeof(ZZCell) * root_size);
+  G->root->tag.u = root_size;
   return G;
 }
 
@@ -155,24 +171,120 @@ void ZZ_delGC(ZZGC *G) {
   free(G);
 }
 
-ZZTup* ZZ_alloc(ZZGC *G, size_t n_slots) {
-  if(n_slots + 1 >= G->gens[0]->size) return NULL;
-  ZZTup *p;
-  while(1) {
-    p = allocGen(G->gens[0], n_slots);
-    if(p != NULL) return p;
-    if(!ZZ_minorGC(G)) return NULL;
+void ZZ_setMinMajorHeapSize(ZZGC *G, size_t sz) {
+  if(sz > 0) G->min_major_heap_size = sz;
+}
+
+static void findGenAndIdxOfPtr(ZZGC *G, size_t *gen, size_t *idx, ZZTup *ptr) {
+  while(*gen < G->n_gens && !isPtrInCells(G->gens[*gen], ptr)) ++(*gen);
+  assert(*gen < G->n_gens);
+  *idx = cellGenIdx(G->gens[*gen], ptr);
+}
+
+const size_t MARK_STACK_SIZE = 8192;
+static int newMarkStk(ZZTup ***stk) {
+  ZZTup **s = malloc(sizeof(ZZTup*) * MARK_STACK_SIZE);
+  if(stk == NULL) return -1;
+  ((ZZTup***)s)[0] = *stk;
+  ((ZZTup***)s)[1] = NULL;
+  *stk = s;
+  return 0;
+}
+
+static void delMarkStk(ZZTup ***stk) {
+  if(*stk == NULL) return;
+  ZZTup **s = *stk;
+  ZZTup *next = (ZZTup*) s[1];
+  *stk = (ZZTup**) s[0];
+  (*stk)[1] = next;
+  free(s);
+}
+
+static void delAllMarkStk(ZZTup **stk) {
+  if(stk == NULL) return;
+  while(stk[1]) stk = (ZZTup**) stk[1];
+  while(stk) delMarkStk(&stk);
+}
+
+static void pushMarkStk(ZZTup ***stk, int *sp, ZZTup *val) {
+  if(*stk == NULL || *sp >= MARK_STACK_SIZE) {
+    if((*stk)[1]) *stk = (ZZTup**) (*stk)[1];
+    else newMarkStk(stk);
+    *sp = 1;
+  }
+  (*stk)[(*sp)++] = val;
+}
+
+static ZZTup* popMarkStk(ZZTup ***stk, int *sp) {
+  if(*sp <= 1) {
+    delMarkStk(stk);
+    *sp = MARK_STACK_SIZE;
+  }
+  if(*stk == NULL) return NULL;
+  return (*stk)[--(*sp)];
+}
+
+static inline void markTup(ZZGC *G, ZZTup ***stk, int *sp, ZZTup *t) {
+  size_t g, idx;
+  findGenAndIdxOfPtr(G, &g, &idx, t);
+  ZZMark *m = G->gens[g]->marks + idx;
+  markUpdColor(*m, COLOR_BLACK);
+  if(ptrSizeAtIdx(G->gens[g], idx) > 0)
+    pushMarkStk(stk, sp, t);
+}
+
+static inline void pushSlots(ZZGC *G, ZZTup ***stk, int *sp, ZZTup *t) {
+  size_t g, idx;
+  findGenAndIdxOfPtr(G, &g, &idx, t);
+  ZZMark *m = G->gens[g]->marks + idx;
+  size_t sz = ptrSizeAtIdx(G->gens[g], idx);
+  for(int i = 0; i < sz; i++) {
+    markTup(G, stk, sp, t->slots[i]);
   }
 }
 
-int ZZ_minorGC(ZZGC *G) {
-  printf("[ERR] MINOR GC RUNNING!");
-  exit(1);
+static int GCMarkPhase(ZZGC *G) {
+  ZZTup **stk = NULL;
+  int sp;
+  // Copy roots into stk
+  for(int i = 0; i < G->root->tag.u; i++) {
+    markTup(G, &stk, &sp, G->root->slots[i]);
+  }
+  // Mark recursively
+  while(stk != NULL) {
+    ZZTup *t = popMarkStk(&stk, &sp);
+    pushSlots(G, &stk, &sp, t);
+  }
+  return -1;
 }
 
-int ZZ_majorGC(ZZGC *G) {
-  printf("[ERR] MAJOR GC RUNNING!");
-  exit(2);
+static int GCMovePhase(ZZGC *G, size_t gen) {
+  return -1;
+}
+
+static int runGC(ZZGC *G, size_t gen) {
+  if(GCMarkPhase(G) < 0) return -1;
+  if(GCMovePhase(G, gen) < 0) return -1;
+  return 0;
+}
+
+int ZZ_runGC(ZZGC *G) {
+  return runGC(G, 0);
+}
+
+ZZTup* ZZ_alloc(ZZGC *G, size_t n_slots) {
+  size_t gen = 0;
+  if(n_slots + 1 >= G->gens[gen]->size) {
+    ++gen;
+    while(gen < G->n_gens && n_slots + 1 >= G->gens[gen]->size) ++gen;
+    if(gen >= G->n_gens) {
+      if(pushNewGCGen(G, n_slots * 2) < 0) return NULL;
+    }
+  }
+  ZZTup *p = allocTup(G->gens[gen], n_slots);
+  if(p != NULL) return p;
+  if(runGC(G, gen) < 0) return NULL;
+  return allocTup(G->gens[gen], n_slots);
 }
 
 ZZTup* ZZ_root(ZZGC *G) {
@@ -196,6 +308,54 @@ int ZZ_popFrame(ZZGC *G) {
   G->root->slots[0] = G->root->slots[0]->slots[0];
   return 0;
 }
+
+size_t ZZ_nGen(ZZGC *G) { return G->n_gens; }
+size_t ZZ_reservedSlots(ZZGC *G, int idx) {
+  if(idx < -1 || idx >= (int)G->n_gens) return 0;
+  if(idx >= 0) return G->gens[idx]->size;
+  size_t sum = 0;
+  for(idx = 0; idx < G->n_gens; idx++)
+    sum += G->gens[idx]->size;
+  return sum;
+}
+size_t ZZ_leftSlots(ZZGC *G, int idx) {
+  if(idx < -1 || idx >= (int)G->n_gens) return 0;
+  if(idx >= 0) return G->gens[idx]->left;
+  size_t sum = 0;
+  for(idx = 0; idx < G->n_gens; idx++)
+    sum += G->gens[idx]->left;
+  return sum;
+}
+size_t ZZ_allocatedSlots(ZZGC *G, int idx) {
+  return ZZ_reservedSlots(G, idx) - ZZ_leftSlots(G, idx);
+}
+
+void ZZ_printGCStatus(ZZGC *G, size_t *dst) {
+  size_t arr[4];
+  if(dst == NULL) {
+    dst = arr;
+  }
+  dst[0] = ZZ_reservedSlots(G, -1);
+  dst[1] = ZZ_leftSlots(G, -1);
+  dst[2] = ZZ_reservedSlots(G, 0);
+  dst[3] = ZZ_leftSlots(G, 0);
+  printf("GC Stat (%p, %" PRIuPTR " gens) [alloc(%%) / left(%%) / total]\n",
+    G, G->n_gens);
+  size_t t = dst[0], l = dst[1];
+  size_t a = t - l;
+  double ap = 100 * (double) a / t;
+  double lp = 100 * (double) l / t;
+  printf(
+    "* Entire: %" PRIuPTR "(%.2lf%%) / %" PRIuPTR "(%.2lf%%) / %" PRIuPTR "\n",
+    a, ap, l, lp, t);
+  t = dst[2], l = dst[3]; a = t - l;
+  ap = 100 * (double) a / t;
+  lp = 100 * (double) l / t;
+  printf(
+    "* Minor: %" PRIuPTR "(%.2lf%%) / %" PRIuPTR "(%.2lf%%) / %" PRIuPTR "\n",
+    a, ap, l, lp, t);
+}
+
 
 ZZStr* ZZ_newStr(size_t len) {
   ZZStr *S = (ZZStr*) malloc(sizeof(ZZStr) + len);
