@@ -8,4 +8,4 @@ clean:
 	$(RM) *.o *.out
 
 test0.out: test0.c zzcore.c
-	$(CC) -o $@ $(COPT) $<
+	$(CC) -o $@ $(COPT) $^

@@ -33,17 +33,17 @@ struct ZZTup {
 
 struct ZZGC;
 
-ZZGC* ZZ_newGC();
+ZZGC* ZZ_newGC(size_t);
 void ZZ_delGC(ZZGC*);
 
 ZZTup* ZZ_alloc(ZZGC*, size_t n_slots);
-void ZZ_minorGC(ZZGC*);
-void ZZ_majorGC(ZZGC*);
+int ZZ_minorGC(ZZGC*);
+int ZZ_majorGC(ZZGC*);
 
-ZZTup* ZZ_bot(ZZGC*);
-ZZTup* ZZ_top(ZZGC*);
-void ZZ_pushFrame(ZZGC*, size_t frame_size);
-void ZZ_popFrame(ZZGC*);
+ZZTup* ZZ_root(ZZGC*);
+ZZTup* ZZ_frame(ZZGC*);
+ZZTup* ZZ_pushFrame(ZZGC*, size_t frame_size);
+int ZZ_popFrame(ZZGC*);
 
 struct ZZStr {
   size_t len;

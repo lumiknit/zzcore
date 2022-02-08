@@ -4,3 +4,4 @@ OUT*
 *.o
 *.a
 *.so
+*_min.c
