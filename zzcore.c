@@ -83,7 +83,7 @@ static ZZTup* allocTup(ZZGen *J, const size_t slots) {
   ZZTup* const ptr = (ZZTup*) (J->cells + J->left);
   const ZZMark m_left = markConstr(1, COLOR_FREE, 0);
   const ZZMark m_2nd = markConstr(1, COLOR_FREE, slots >> 5);
-  const ZZMark m_1st = markConstr(1, COLOR_BLACK, slots & 0x1f);
+  const ZZMark m_1st = markConstr(0, COLOR_WHITE, slots & 0x1f);
   size_t idx = J->left;
   J->marks[idx] = m_1st;
   if(n >= 1) {
