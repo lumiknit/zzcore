@@ -4,12 +4,53 @@
 #include <stdint.h>
 #include <limits.h>
 
-typedef union ZZTag ZZTag;
-typedef struct ZZTup ZZTup;
-typedef struct ZZGC ZZGC;
-typedef struct ZZStr ZZStr;
+// PTR size types
+typedef uintptr_t zu_t;
+typedef uint8_t zb_t;
+typedef intptr_t zi_t;
+typedef void* zp_t;
+#if UINTPTR_MAX == 0xffffffffffffffff
+#define ZC_SZPTR 8
+  typedef double zf_t;
+#elif UINTPTR_MAX == 0xffffffff
+#define ZC_SZPTR 4
+  typedef float zf_t;
+#else
+  #error Unsupported ptr size
+#endif
 
-union ZZTag {
+typedef struct zgc zgc_t;
+
+// GC APIs
+zgc_t* zNewGC(zu_t /* root size */, zu_t /* minor heap size */);
+void zDelGC(zgc_t*);
+
+// Option setter
+void zSetMajorMinSize(zgc_t*, zu_t /* min major heap size */);
+
+// Allocation
+zu_t* zAlloc(zgc_t*, zu_t /* # of non-pointer */, zu_t /* # of pointer */);
+
+// Collection
+int zRunGC(zgc_t*);
+int zFullGC(zgc_t*);
+
+// GC Helpers
+zp_t zRoot(zgc_t*, zu_t, zp_t);
+
+int zEnableCyclicRef(zgc_t*, int);
+
+// GC Information
+zu_t zNGen(zgc_t*);
+zu_t zReservedSlots(zgc_t*, int /* idx of gen, -1 for whole slots */);
+zu_t zLeftSlots(zgc_t*, int /* idx of gen, -1 for whold slots */);
+zu_t zAllocatedSlots(zgc_t*, int /* idx of gen, -1 for whold slots */);
+
+// For tests
+void zPrintGCStatus(zgc_t*, zu_t *dst);
+
+// -- Helpers --
+typedef union ztag {
   uintptr_t u;
   intptr_t i;
 #if UINTPTR_MAX == 0xffffffffffffffff
@@ -20,49 +61,14 @@ union ZZTag {
   #error Unsupported int size
 #endif
   void *p;
-  ZZTup *t;
-  ZZStr *s;
+  struct ztup *t;
   int32_t i32[1];
   int16_t i16[1];
-};
+} ztag_t;
 
-struct ZZTup {
-  ZZTag tag;
-  ZZTup *slots[0];
-};
-
-struct ZZGC;
-
-// GC APIs
-ZZGC* ZZ_newGC(size_t /* root size */, size_t /* minor heap size */);
-void ZZ_delGC(ZZGC*);
-// Set Options
-void ZZ_setMinMajorHeapSize(ZZGC*, size_t /* min major heap size */);
-// Allocation
-ZZTup* ZZ_alloc(ZZGC*, size_t /* # of slots */);
-// run gc
-int ZZ_runGC(ZZGC*);
-// GC Helpers
-ZZTup* ZZ_root(ZZGC*);
-ZZTup* ZZ_frame(ZZGC*);
-ZZTup* ZZ_pushFrame(ZZGC*, size_t /* # of slots in a frame */);
-int ZZ_popFrame(ZZGC*);
-// GC Information
-size_t ZZ_nGen(ZZGC*);
-size_t ZZ_reservedSlots(ZZGC*, int /* idx of gen, -1 for whole slots */);
-size_t ZZ_leftSlots(ZZGC*, int /* idx of gen, -1 for whold slots */);
-size_t ZZ_allocatedSlots(ZZGC*, int /* idx of gen, -1 for whold slots */);
-// For tests
-void ZZ_printGCStatus(ZZGC*, size_t *dst);
-
-// Helpers
-
-struct ZZStr {
-  size_t len;
-  char c[1];
-};
-
-ZZStr* ZZ_newStr(size_t);
-void ZZ_delStr(ZZStr*);
+typedef struct ztup {
+  ztag_t tag;
+  struct ztup *slots[0];
+} ztup_t;
 
 #endif

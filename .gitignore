@@ -5,3 +5,4 @@ OUT*
 *.a
 *.so
 *_min.c
+*.old*

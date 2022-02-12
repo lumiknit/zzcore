@@ -7,7 +7,7 @@
 #include "../zzcore.h"
 
 
-int main() {
+int main() {/*
   // New GC
   ZZGC *G = ZZ_newGC(16, 128);
   assert(G != NULL);
@@ -18,6 +18,6 @@ int main() {
     ZZ_printGCStatus(G, NULL);
   }
   // Del GC
-  ZZ_delGC(G);
+  ZZ_delGC(G);*/
   return 0;
 }
