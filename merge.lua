@@ -22,7 +22,7 @@ replaceHeader = function(src, hd)
 end
 
 removeComments = function(src)
-  return src:gsub("/%*.*%*/", "[ERR]")
+  return src:gsub("/%*[^*]*%*/", " ")
             :gsub("//[^\n]*\n", "\n")
 end
 
