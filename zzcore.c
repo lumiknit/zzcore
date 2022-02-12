@@ -214,6 +214,29 @@ void zSetMajorMinSize(zgc_t *G, zu_t msz) {
 
 // Allocation
 zu_t* zAlloc(zgc_t *G, zu_t np, zu_t p) {
+  // Check very large chunk required
+  if(np + p >= G->gens[0]->size) {
+    if(!G->has_cyclic_ref && p > 0) {
+      // If cyclic is not allowed and there is ref part,
+      // full gc and alloc
+      zFullGC(G);
+    } else {
+      // Try to find a empty space
+      zu_t *ptr, k;
+      for(k = 1; k < G->n_gens; k++) {
+        if((ptr = zGenAlloc(G->gens[k], np, p))) return ptr;
+      }
+      // Make a new generation
+      zgen_t *J = zNewGen((np + p) * 2);
+      if(J == NULL) return NULL;
+      for(k = G->n_gens; k >= 2; k--) {
+        G->gens[k] = G->gens[k - 1];
+      }
+      G->gens[1] = J;
+      G->n_gens++;
+      return zGenAlloc(J, np, p);
+    }
+  }
   // Try to allocate in minor heap
   zu_t *ptr = zGenAlloc(G->gens[0], np, p);
   if(ptr != NULL) return ptr;
@@ -487,10 +510,15 @@ void zPrintGCStatus(zgc_t *G, zu_t *dst) {
   printf(
     "* Entire: %" PRIuPTR "(%.2lf%%) / %" PRIuPTR "(%.2lf%%) / %" PRIuPTR "\n",
     a, ap, l, lp, t);
-  t = dst[2], l = dst[3]; a = t - l;
-  ap = 100 * (double) a / t;
-  lp = 100 * (double) l / t;
-  printf(
-    "* Minor: %" PRIuPTR "(%.2lf%%) / %" PRIuPTR "(%.2lf%%) / %" PRIuPTR "\n",
-    a, ap, l, lp, t);
+  zu_t k;
+  for(k = 0; k < G->n_gens; k++) {
+    t = zReservedSlots(G, k), l = zLeftSlots(G, k);
+    a = t - l;
+    ap = 100 * (double) a / t;
+    lp = 100 * (double) l / t;
+    printf(
+      "* [%" PRIuPTR "]: %" PRIuPTR "(%.2lf%%) / %"
+      PRIuPTR "(%.2lf%%) / %" PRIuPTR "\n",
+      k, a, ap, l, lp, t);
+  }
 }

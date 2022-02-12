@@ -1,23 +1,15 @@
-/* Test 02
- * Allocate tuples until gc run
- */
-#include <assert.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include "../zzcore.h"
-
-
-int main() {/*
+#include "test.h"
+const char *TEST_NAME = "02. run gc once";
+void test() {
   // New GC
-  ZZGC *G = ZZ_newGC(16, 128);
+  zgc_t *G = zNewGC(16, 128);
   assert(G != NULL);
   // New Tuple
   for(int i = 0; i < 14; i++) {
-    assert(NULL != ZZ_alloc(G, 10));
+    assert(NULL != zAlloc(G, 0, 10));
     printf("[INFO] %d-th allocation \n", 1 + i);
-    ZZ_printGCStatus(G, NULL);
+    zPrintGCStatus(G, NULL);
   }
   // Del GC
-  ZZ_delGC(G);*/
-  return 0;
+  zDelGC(G);
 }

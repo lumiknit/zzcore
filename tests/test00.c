@@ -1,12 +1,6 @@
-/* Test 00
- * GC Initialize & finalize
- */
-#include <assert.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include "../zzcore.h"
-
-int main() {
+#include "test.h"
+const char *TEST_NAME = "00. zNewGC and zDelGC";
+void test() {
   // New GC
   size_t sz[4];
   zgc_t *G = zNewGC(16, 64);
@@ -23,5 +17,4 @@ int main() {
   assert(zLeftSlots(G, -1) == 59);
   // Del GC
   zDelGC(G);
-  return 0;
 }

@@ -5,7 +5,8 @@ COPT = -O0 -g
 TESTS = \
 	test00.out \
 	test01.out \
-	test02.out
+	test02.out \
+	test03.out
 
 .PHONY: all clean
 all: $(TESTS)

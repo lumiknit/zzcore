@@ -1,23 +1,20 @@
-/* Test 01
- * Allocate a quite large object
- */
-#include <assert.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include "../zzcore.h"
-
-
-int main() {/*
+#include "test.h"
+const char *TEST_NAME = "01. alloc large object w/o full gc";
+void test() {
   // New GC
-  ZZGC *G = ZZ_newGC(16, 16);
+  zgc_t *G = zNewGC(3, 32);
+  zEnableCyclicRef(G, 1);
   assert(G != NULL);
-  // New Tuple
-  ZZTup *t1 = ZZ_alloc(G, 1000);
+  // New Large Tuple
+  ztup_t *t1 = (ztup_t*) zAlloc(G, 1, 1000);
   assert(t1 != NULL);
   t1->tag.i = 16;
   assert(t1->slots[0] == NULL);
   assert(t1->slots[999] == NULL);
+  // New Large string
+  char *c = (char*) zAlloc(G, 16384, 0);
+  assert(c != NULL);
+  zPrintGCStatus(G, NULL);
   // Del GC
-  ZZ_delGC(G);*/
-  return 0;
+  zDelGC(G);
 }
