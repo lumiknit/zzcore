@@ -275,7 +275,7 @@ static int zMarkGC(zgc_t *G) {
 }
 
 static zu_t zFindNGensToMoveGC(zgc_t *G, zu_t bot) {
-  zu_t acc = G->gens[bot]->left;
+  zu_t acc = G->gens[bot]->n_reachables;
   zu_t k = bot + 1;
   while(k < G->n_gens) {
     if(acc < G->gens[k]->left) break;
@@ -287,6 +287,16 @@ static zu_t zFindNGensToMoveGC(zgc_t *G, zu_t bot) {
 
 static int zMoveGC(zgc_t *G, zu_t bot, zu_t n) {
   // Find destination gen. to copy
+  zgen_t *dst;
+  if(bot + n >= G->n_gens) {
+    zu_t sz = 0, k;
+    for(k = bot; k < bot + n; k++) {
+      sz += G->gens[k]->n_reachables;
+    }
+    dst = zNewGen(sz * 2);
+  } else {
+    dst = G->gens[bot + n];
+  }
   // Reallocate (copy)
   // Change all reallocated pointers
   // Clean up gen.s
