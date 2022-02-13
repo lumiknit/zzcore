@@ -1,12 +1,9 @@
 CC = gcc
 RM = rm
 COPT = -O0 -g
+N_TESTS = 3
 
-TESTS = \
-	test00.out \
-	test01.out \
-	test02.out \
-	test03.out
+TESTS := $(shell ruby -e "puts (0..$(N_TESTS)).to_a.map{|x| 'test%02d.out' % x}.join ' '")
 
 .PHONY: all clean
 all: $(TESTS)
