@@ -298,7 +298,7 @@ static int zMarkPropagate(zgc_t *G, zp_t p) {
   zu_t j;
   for(j = 0; j < G->n_gens; j++) {
     zgen_t *J = G->gens[j];
-    zu_t idx = zGenPtrIdx(J, p);
+    zi_t idx = zGenPtrIdx(J, p);
     if(idx >= 0) {
       // p must be at the first of chunk
       assert(J->s[idx] & ZZ_SEP);
@@ -310,19 +310,19 @@ static int zMarkPropagate(zgc_t *G, zp_t p) {
         if(!(J->s[idx + off] & ZZ_NPTR)) { // Ignore non-pointer slots
           // Find generation & index of ref
           zu_t k;
-          for(k = 0; j < G->n_gens; k++) {
-            zgen_t *K = G->gens[j];
-            zu_t idx = zGenPtrIdx(K, (zp_t) J->p[idx + off]);
+          for(k = 0; k < G->n_gens; k++) {
+            zgen_t *K = G->gens[k];
+            zi_t idy = zGenPtrIdx(K, (zp_t) J->p[idx + off]);
             // Check ref is not visited
-            if(idx >= 0 && (K->s[idx] & ZZ_SEP) &&
-               (K->m[idx] & ZZ_COLOR == ZZ_WHITE)) {
+            if(idy >= 0 && (K->s[idy] & ZZ_SEP) &&
+               ((K->m[idy] & ZZ_COLOR) == ZZ_WHITE)) {
               // Mark black
               // (For incremental GC, it should be ZZ_GRAY)
-              K->m[idx] |= ZZ_BLACK;
+              K->m[idy] |= ZZ_BLACK;
               zMarkStkPush(G, (zp_t) J->p[idx + off]);
               break;
         } } }
-      } while(!(J->m[idx + (++off)] & ZZ_SEP));
+      } while(!(J->s[idx + (++off)] & ZZ_SEP));
       break;
   } }
   return 1;
@@ -361,11 +361,14 @@ static int zReallocGenGC(zgc_t *G, zgen_t *dst, zgen_t *src) {
     assert(src->s[off] & ZZ_SEP);
     // Find next chunk
     zu_t sz = zGenIdxSz(src, off);
-    // Allocate into dst
-    zu_t *n = zGenRealloc(dst, sz, src, off);
-    assert(n != NULL);
-    // Save a new pointer in the old object
-    src->p[off] = (zu_t) n;
+    // When the object is reachable
+    if((src->m[off] & ZZ_COLOR) != ZZ_WHITE) {
+      // Allocate into dst
+      zu_t *n = zGenRealloc(dst, sz, src, off);
+      assert(n != NULL);
+      // Save a new pointer in the old object
+      src->p[off] = (zu_t) n;
+    }
     off += sz;
   }
 }
@@ -384,7 +387,7 @@ static void zGenUpdatePointers(zgc_t *G, zgen_t *J, zu_t bot, zu_t n) {
 } } } } }
 
 static int zMoveGC(zgc_t *G, zu_t bot, zu_t n) {
-  zu_t j, k;
+  zi_t j, k;
   // Find destination gen. to copy
   zgen_t *dst;
   if(bot + n >= G->n_gens) {
@@ -396,7 +399,7 @@ static int zMoveGC(zgc_t *G, zu_t bot, zu_t n) {
     if(dst == NULL) return -1;
   } else dst = G->gens[bot + n];
   // Reallocate (copy)
-  for(j = n + bot - 1; j >= bot; j--) {
+  for(j = n + bot - 1; j >= (zi_t) bot; j--) {
     if(zReallocGenGC(G, dst, G->gens[j]) < 0) return -1;
   }
   // Change all reallocated pointers
@@ -407,10 +410,10 @@ static int zMoveGC(zgc_t *G, zu_t bot, zu_t n) {
   if(bot + n >= G->n_gens) zGenUpdatePointers(G, dst, bot, n);
   // Clean up gens
   for(k = 0; k < bot; k++) zCleanMarkGen(G->gens[k]);
-  for(; k < bot + n; k++) zDelGen(G->gens[k]);
+  for(k = (k == 0) ? 1 : k; k < bot + n; k++) zDelGen(G->gens[k]);
   for(; k < G->n_gens; k++) zCleanMarkGen(G->gens[k]);
   if(bot == 0) {
-    zCleanAllGen(G->gens[k]);
+    zCleanAllGen(G->gens[0]);
     bot++; n--;
   }
   // Remove copied generations
