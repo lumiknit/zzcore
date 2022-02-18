@@ -6,3 +6,4 @@ OUT*
 *.so
 *_min.c
 *.old*
+*.gch

@@ -19,14 +19,18 @@ typedef void* zp_t;
   #error Unsupported ptr size
 #endif
 
+typedef union ztag {
+  zu_t u; zi_t i; zf_t f; zp_t p;
+  struct ztup *t;
+  int32_t i32[0];
+  int16_t i16[0];
+} ztag_t;
+
 typedef struct zgc zgc_t;
 
 // GC APIs
 zgc_t* zNewGC(zu_t /* root size */, zu_t /* minor heap size */);
 void zDelGC(zgc_t*);
-
-// Option setter
-void zSetMajorMinSize(zgc_t*, zu_t /* min major heap size */);
 
 // Allocation
 zu_t* zAlloc(zgc_t*, zu_t /* # of non-pointer */, zu_t /* # of pointer */);
@@ -35,10 +39,18 @@ zu_t* zAlloc(zgc_t*, zu_t /* # of non-pointer */, zu_t /* # of pointer */);
 int zRunGC(zgc_t*);
 int zFullGC(zgc_t*);
 
-// GC Helpers
-zp_t zGCRoot(zgc_t*, zu_t /* idx */, zp_t /* new ptr */);
-// Return old roots[idx]; roots[idx] will not change if ptr == 1
+// GC root frames
+void zGCPushFrame(zgc_t*, zu_t /* size */);
+void zGCPopFrame(zgc_t*);
+zu_t zGCTopFrameSize(zgc_t*);
+zu_t zGCBotFrameSize(zgc_t*);
+ztag_t zGCTopFrame(zgc_t*, zu_t /* idx */);
+ztag_t zGCBotFrame(zgc_t*, zu_t /* idx */);
+void zGCSetTopFrame(zgc_t*, zu_t /* idx */, ztag_t /*v*/, zu_t /*is_not_ptr*/);
+void zGCSetBotFrame(zgc_t*, zu_t /* idx */, ztag_t /*v*/, zu_t /*is_not_ptr*/);
 
+// Option setter
+void zSetMajorMinSize(zgc_t*, zu_t /* min major heap size */);
 int zAllowCyclicRef(zgc_t*, int);
 
 // GC Information
@@ -51,25 +63,19 @@ zu_t zAllocatedSlots(zgc_t*, int /* idx of gen, -1 for whold slots */);
 void zPrintGCStatus(zgc_t*, zu_t *dst);
 
 // -- Helpers --
-typedef union ztag {
-  uintptr_t u;
-  intptr_t i;
-#if UINTPTR_MAX == 0xffffffffffffffff
-  double f;
-#elif UINTPTR_MAX == 0xffffffff
-  float f;
-#else
-  #error Unsupported int size
-#endif
-  void *p;
-  struct ztup *t;
-  int32_t i32[1];
-  int16_t i16[1];
-} ztag_t;
 
 typedef struct ztup {
   ztag_t tag;
   struct ztup *slots[0];
 } ztup_t;
+
+ztup_t *zAllocTup(zgc_t*, zu_t /* tag */, zu_t /* dim */);
+
+typedef struct zstr {
+  zu_t len;
+  char c[1];
+} zstr_t;
+
+zstr_t *zAllocStr(zgc_t*, zu_t /* len */);
 
 #endif

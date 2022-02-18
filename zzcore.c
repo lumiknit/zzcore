@@ -48,6 +48,14 @@ typedef struct zgen { // generation structure
   zb_t *body;
 } zgen_t;
 
+typedef struct zframe {
+  struct zframe *prev;
+  zu_t size;
+  zb_t *s;
+  ztag_t *v;
+  zp_t p[1];
+} zframe_t;
+
 typedef struct zgc {
   // Options
   zu_t major_heap_min_size; // [1-] Major heap minimum size
@@ -56,8 +64,7 @@ typedef struct zgc {
   zu_t sz_gens, n_gens; // Gens array size & number of gens
   zgen_t **gens;
   // Roots
-  zu_t n_roots;
-  zp_t *roots;
+  zframe_t *bot_frame, *top_frame;
   // Mark stack
   zi_t mark_sp, sz_mark_stk;
   zp_t *mark_stk;
@@ -174,23 +181,32 @@ static zi_t zGenIdxSz(zgen_t *X, zi_t idx) {
   return off - idx;
 }
 
+static zframe_t* zNewFrame(zu_t sz, zframe_t *prev) {
+  zu_t asz = sizeof(zframe_t) + (sizeof(zp_t) + sizeof(zb_t)) * sz;
+  zframe_t *f = (zframe_t*) malloc(asz);
+  memset(f, 0x00, asz);
+  f->size = sz;
+  f->prev = prev;
+  f->s = (zb_t*) (f + 1);
+  f->v = (zp_t*) (f->s + sz);
+  return f;
+}
+
 // GC APIs
 zgc_t* zNewGC(zu_t sz_roots, zu_t sz_minor) {
   zgc_t *G = (zgc_t*) malloc(sizeof(zgc_t));
   zgen_t **gens = (zgen_t**) malloc(sizeof(zgen_t*) * ZZ_N_GENS);
-  zp_t *roots = (zp_t*) malloc(sizeof(zp_t) * sz_roots);
+  zframe_t *bot_frame = zNewFrame(sz_roots, NULL);
   zp_t *stk = (zp_t*) malloc(sizeof(zp_t) * ZZ_MARK_STK_BOT_SIZE);
   if(sz_minor <= 16) sz_minor = ZZ_DEFAULT_MINOR_HEAP_SIZE;
   zgen_t *minor = zNewGen(sz_minor);
-  if(!G || !gens || !roots || !stk || !minor) goto L_fail;
+  if(!G || !gens || !bot_frame || !stk || !minor) goto L_fail;
   memset(gens, 0x00, sizeof(zgen_t*) * ZZ_N_GENS);
-  memset(roots, 0x00, sizeof(zp_t) * sz_roots);
   gens[0] = minor;
   G->gens = gens;
-  G->roots = roots;
+  G->bot_frame = G->top_frame = bot_frame;
   G->major_heap_min_size = ZZ_DEFAULT_MAJOR_HEAP_SIZE;
   G->sz_gens = ZZ_N_GENS, G->n_gens = 1;
-  G->n_roots = sz_roots;
   G->mark_stk = stk;
   stk[0] = stk[ZZ_MARK_STK_BOT_SIZE - 1] = NULL;
   G->mark_sp = 1;
@@ -200,7 +216,7 @@ zgc_t* zNewGC(zu_t sz_roots, zu_t sz_minor) {
 L_fail:
   if(G) free(G);
   if(gens) free(gens);
-  if(roots) free(roots);
+  if(bot_frame) free(bot_frame);
   return NULL;
 }
 
@@ -209,7 +225,12 @@ void zDelGC(zgc_t *G) {
   for(k = 0; k < G->n_gens; k++)
     zDelGen(G->gens[k]);
   free(G->gens);
-  free(G->roots);
+  zframe_t *f;
+  while(G->top_frame) {
+    f = G->top_frame;
+    G->top_frame = f->prev;
+    free(f);
+  }
   free(G);
 }
 
@@ -336,8 +357,13 @@ static int zMarkPropagate(zgc_t *G, zp_t p) {
 
 static int zMarkGC(zgc_t *G) {
   // Push all roots into stack
+  zframe_t *f;
   zu_t k;
-  for(k = 0; k < G->n_roots; k++) zMarkStkPush(G, G->roots[k]);
+  for(f = G->top_frame; f; f = f->prev) {
+    for(k = 0; k < f->size; k++)
+      if(!(f->s[k] & ZZ_NPTR))
+        zMarkStkPush(G, f->v[k].p);
+  }
   // Pop and marking
   while(zMarkStkIsNonEmpty(G)) {
     zp_t p = zMarkStkPop(G);
@@ -390,11 +416,13 @@ static void zGenUpdatePointers(zgc_t *G, zgen_t *J) {
 } } }
 
 static void zUpdateRootPointers(zgc_t *G) {
-  zu_t i;
-  for(i = 0; i < G->n_roots; i++) {
-    zp_t ptr = G->roots[i];
-    G->roots[i] = zFindNewPointer(G, G->roots[i]);
-} }
+  zframe_t *f;
+  for(f = G->top_frame; f; f = f->prev) {
+    zu_t i;
+    for(i = 0; i < f->size; i++) {
+      if(!(f->s[i] & ZZ_NPTR))
+        f->v[i].p = zFindNewPointer(G, f->v[i].p);
+} } }
 
 static int zMoveGC(zgc_t *G) {
   zi_t j, k;
@@ -472,12 +500,36 @@ int zFullGC(zgc_t *G) {
   return 0;
 }
 
-// GC Helpers
-zp_t zGCRoot(zgc_t *G, zu_t idx, zp_t ptr) {
-  if((zp_t) 1 == ptr) return G->roots[idx];
-  zp_t *p = G->roots[idx];
-  G->roots[idx] = ptr;
-  return p;
+// Root frames
+void zGCPushFrame(zgc_t *G, zu_t sz) {
+  G->top_frame = zNewFrame(sz, G->top_frame);
+}
+void zGCPopFrame(zgc_t *G) {
+  if(G->top_frame != NULL && G->top_frame != G->bot_frame) {
+    zframe_t *f = G->top_frame;
+    G->top_frame = f->prev;
+    free(f);
+  }
+}
+zu_t zGCTopFrameSize(zgc_t *G) {
+  return G->top_frame->size;
+}
+zu_t zGCBotFrameSize(zgc_t *G) {
+  return G->bot_frame->size;
+}
+ztag_t zGCTopFrame(zgc_t *G, zu_t idx) {
+  return G->top_frame->v[idx];
+}
+ztag_t zGCBotFrame(zgc_t *G, zu_t idx) {
+  return G->bot_frame->v[idx];
+}
+void zGCSetTopFrame(zgc_t *G, zu_t idx, ztag_t v, zu_t is_nptr) {
+  G->top_frame->v[idx] = v;
+  G->top_frame->s[idx] = is_nptr ? ZZ_NPTR : 0;
+}
+void zGCSetBotFrame(zgc_t *G, zu_t idx, ztag_t v, zu_t is_nptr) {
+  G->bot_frame->v[idx] = v;
+  G->bot_frame->s[idx] = is_nptr ? ZZ_NPTR : 0;
 }
 
 int zAllowCyclicRef(zgc_t *G, int v) {
@@ -521,31 +573,38 @@ zu_t zAllocatedSlots(zgc_t *G, int idx) {
 // For tests
 void zPrintGCStatus(zgc_t *G, zu_t *dst) {
   zu_t arr[4];
-  if(dst == NULL) {
-    dst = arr;
-  }
-  dst[0] = zReservedSlots(G, -1);
-  dst[1] = zLeftSlots(G, -1);
-  dst[2] = zReservedSlots(G, 0);
-  dst[3] = zLeftSlots(G, 0);
+  if(dst == NULL) dst = arr;
+  dst[0] = zReservedSlots(G, -1); dst[1] = zLeftSlots(G, -1);
+  dst[2] = zReservedSlots(G, 0); dst[3] = zLeftSlots(G, 0);
   printf("GC Stat (%p, %" PRIuPTR " gens) [alloc(%%) / left(%%) / total]\n",
     G, G->n_gens);
   zu_t t = dst[0], l = dst[1];
   zu_t a = t - l;
-  double ap = 100 * (double) a / t;
-  double lp = 100 * (double) l / t;
   printf(
     "* Entire: %" PRIuPTR "(%.2lf%%) / %" PRIuPTR "(%.2lf%%) / %" PRIuPTR "\n",
-    a, ap, l, lp, t);
+    a, 100 * (double) a / t, l, 100 * (double) l / t, t);
   zu_t k;
   for(k = 0; k < G->n_gens; k++) {
     t = zReservedSlots(G, k), l = zLeftSlots(G, k);
     a = t - l;
-    ap = 100 * (double) a / t;
-    lp = 100 * (double) l / t;
     printf(
       "* [%" PRIuPTR "]: %" PRIuPTR "(%.2lf%%) / %"
       PRIuPTR "(%.2lf%%) / %" PRIuPTR "\n",
-      k, a, ap, l, lp, t);
+      k, a, 100 * (double) a / t, l, 100 * (double) l / t, t);
   }
+}
+
+// Helpers
+ztup_t *zAllocTup(zgc_t *G, zu_t tag, zu_t dim) {
+  ztup_t *t = (ztup_t*) zAlloc(G, 1, dim);
+  t->tag.u = tag;
+  return t;
+}
+
+zstr_t *zAllocStr(zgc_t *G, zu_t len) {
+  zu_t sz = 2 + len / ZC_SZPTR;
+  zstr_t *s = (zstr_t*) zAlloc(G, sz, 0);
+  s->len = len;
+  s->c[0] = s->c[len] = '\0';
+  return s;
 }

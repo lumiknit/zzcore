@@ -16,16 +16,16 @@ void run(const char *label, zgc_t *G) {
   zp_t *x = (zp_t*) zAlloc(G, 0, 2), *nx;
   x[0] = x;
   x[1] = NULL;
-  zGCRoot(G, 0, (zp_t) x);
+  zGCSetTopFrame(G, 0, (ztag_t) {.p = x}, 0);
   zRunGC(G);
-  nx = zGCRoot(G, 0, (zp_t) 1);
+  nx = zGCTopFrame(G, 0).p;
   zp_t *y = (zp_t*) zAlloc(G, 0, 2);
   y[0] = x;
   y[1] = NULL;
   nx[1] = y;
   printf("[%s] Before GC: x = %p, x[1] = %p\n", label, nx, nx[1]);
   zRunGC(G);
-  nx = zGCRoot(G, 0, (zp_t) 1);
+  nx = zGCTopFrame(G, 0).p;
   printf("[%s] After GC: x = %p, x[1] = %p\n", label, nx, nx[1]);
   zPrintGCStatus(G, NULL);
 }

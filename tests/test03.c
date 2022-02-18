@@ -15,7 +15,7 @@ void test() {
     if(rand() % 2 == 0) {
       int idx = rand() % 3;
       ss[idx] = p;
-      zGCRoot(G, idx, p);
+      zGCSetTopFrame(G, idx, (ztag_t) {.p = p}, 0);
     }
     if(rand() % 2 == 0) {
       p[0] = ss[rand() % 3];
