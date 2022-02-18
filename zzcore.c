@@ -121,8 +121,7 @@ static zu_t* zGenAlloc(zgen_t *X, zu_t np, zu_t p) {
   return X->p + X->left;
 }
 
-static zu_t* zGenRealloc(
-    zgen_t *X, zu_t sz, zgen_t *src, zu_t off) {
+static zu_t* zGenRealloc(zgen_t *X, zu_t sz, zgen_t *src, zu_t off) {
   if(X->left < sz) return NULL;
   X->left -= sz;
   memcpy(X->s + X->left, src->s + off, sizeof(zb_t) * sz);
@@ -130,13 +129,13 @@ static zu_t* zGenRealloc(
   return X->p + X->left;
 }
 
-static void zCleanMarkGen(zgen_t *X) {
+static void zGenCleanMarks(zgen_t *X) {
   memset(X->m + X->left, 0x00, sizeof(zb_t) * (X->size - X->left));
   X->n_reachables = 0, X->is_calc_reachables = 0;
 }
 
-static void zCleanAllGen(zgen_t *X) {
-  zCleanMarkGen(X);
+static void zGenCleanAll(zgen_t *X) {
+  zGenCleanMarks(X);
   memset(X->s + X->left, 0x00, sizeof(zb_t) * (X->size - X->left));
   memset(X->p + X->left, 0x00, sizeof(zu_t) * (X->size - X->left));
   X->left = X->size;
@@ -148,8 +147,7 @@ static zu_t zGenAllocated(zgen_t *X) {
 
 static zu_t zGenReachables(zgen_t *X) {
   if(X->is_calc_reachables) return X->n_reachables;
-  zu_t acc = 0;
-  zu_t off = X->left;
+  zu_t acc = 0, off = X->left;
   while(off < X->size) {
     zu_t sz = 1;
     while(!(X->s[off + sz] & ZZ_SEP)) sz++;
@@ -184,8 +182,7 @@ zgc_t* zNewGC(zu_t sz_roots, zu_t sz_minor) {
   zp_t *stk = (zp_t*) malloc(sizeof(zp_t) * ZZ_MARK_STK_BOT_SIZE);
   if(sz_minor <= 16) sz_minor = ZZ_DEFAULT_MINOR_HEAP_SIZE;
   zgen_t *minor = zNewGen(sz_minor);
-  if(!G || !gens || !roots || !stk || !minor)
-    goto L_fail;
+  if(!G || !gens || !roots || !stk || !minor) goto L_fail;
   memset(gens, 0x00, sizeof(zgen_t*) * ZZ_N_GENS);
   memset(roots, 0x00, sizeof(zp_t) * sz_roots);
   gens[0] = minor;
@@ -258,34 +255,28 @@ zu_t* zAlloc(zgc_t *G, zu_t np, zu_t p) {
 // Collection
 
 // Mark stack API
-static int sp = 0;
 static int zMarkStkPush(zgc_t *G, zp_t p) {
   if(G->mark_sp >= G->sz_mark_stk - 1) {
     if(G->mark_stk[G->sz_mark_stk - 1]) {
       G->mark_stk = G->mark_stk[G->sz_mark_stk - 1];
     } else {
       zp_t *fr = (zp_t*) malloc(sizeof(zp_t) * (G->sz_mark_stk << 1));
-      assert(fr != NULL);
+      if(fr == NULL) return -1;
       fr[0] = G->mark_stk;
       fr[(G->sz_mark_stk << 1) - 1] = NULL;
-      G->mark_stk[G->sz_mark_stk - 1] = fr;
-      G->mark_stk = fr;
+      G->mark_stk = G->mark_stk[G->sz_mark_stk - 1] = fr;
     }
-    G->mark_sp = 1;
-    G->sz_mark_stk <<= 1;
+    G->mark_sp = 1, G->sz_mark_stk <<= 1;
   }
   G->mark_stk[G->mark_sp++] = p;
-  sp++;
   return 0;
 }
 static zp_t zMarkStkPop(zgc_t *G) {
   if(G->mark_sp <= 1) {
     if(G->mark_stk[0] == NULL) return NULL;
-    G->mark_stk = G->mark_stk[0];
-    G->sz_mark_stk >>= 1;
+    G->mark_stk = G->mark_stk[0], G->sz_mark_stk >>= 1;
     G->mark_sp = G->sz_mark_stk - 1;
   }
-  sp--;
   return G->mark_stk[--G->mark_sp];
 }
 static int zMarkStkIsNonEmpty(zgc_t *G) {
@@ -311,9 +302,9 @@ static int zMarkPropagate(zgc_t *G, zp_t p) {
   if(p == NULL) return 1;
   // Find generation & index
   zu_t j;
-  for(j = 0; j < G->n_gens; j++) {
-    zgen_t *J = G->gens[j];
-    zi_t idx = zGenPtrIdx(J, p);
+  for(j = 0; j < G->mark_top; j++) {
+    zgen_t * const J = G->gens[j];
+    const zi_t idx = zGenPtrIdx(J, p);
     if(idx >= 0) {
       // p must be at the first of chunk
       assert(J->s[idx] & ZZ_SEP);
@@ -325,9 +316,9 @@ static int zMarkPropagate(zgc_t *G, zp_t p) {
         if(!(J->s[idx + off] & ZZ_NPTR)) { // Ignore non-pointer slots
           // Find generation & index of ref
           zu_t k;
-          for(k = 0; k < G->n_gens; k++) {
-            zgen_t *K = G->gens[k];
-            zi_t idy = zGenPtrIdx(K, (zp_t) J->p[idx + off]);
+          for(k = 0; k < G->mark_top; k++) {
+            zgen_t * const K = G->gens[k];
+            const zi_t idy = zGenPtrIdx(K, (zp_t) J->p[idx + off]);
             // Check ref is not visited
             if(idy >= 0 && (K->s[idy] & ZZ_SEP) &&
                ((K->m[idy] & ZZ_COLOR) == ZZ_WHITE)) {
@@ -346,9 +337,7 @@ static int zMarkPropagate(zgc_t *G, zp_t p) {
 static int zMarkGC(zgc_t *G) {
   // Push all roots into stack
   zu_t k;
-  for(k = 0; k < G->n_roots; k++) {
-    zMarkStkPush(G, G->roots[k]);
-  }
+  for(k = 0; k < G->n_roots; k++) zMarkStkPush(G, G->roots[k]);
   // Pop and marking
   while(zMarkStkIsNonEmpty(G)) {
     zp_t p = zMarkStkPop(G);
@@ -435,11 +424,11 @@ static int zMoveGC(zgc_t *G) {
   if(top >= G->n_gens) zGenUpdatePointers(G, dst);
   zUpdateRootPointers(G);
   // Clean up gens
-  for(k = 0; k < bot; k++) zCleanMarkGen(G->gens[k]);
+  for(k = 0; k < bot; k++) zGenCleanMarks(G->gens[k]);
   for(k = (k == 0) ? 1 : k; k < top; k++) zDelGen(G->gens[k]);
-  for(; k < G->n_gens; k++) zCleanMarkGen(G->gens[k]);
+  for(; k < G->n_gens; k++) zGenCleanMarks(G->gens[k]);
   if(bot == 0) {
-    zCleanAllGen(G->gens[0]);
+    zGenCleanAll(G->gens[0]);
     bot++; gap--;
   }
   // Remove copied generations
@@ -464,7 +453,8 @@ int zRunGC(zgc_t *G) {
   if(G->gens[0]->left >= G->gens[0]->size) return 1;
   // Set-up mark levels
   G->gc_target = 0;
-  G->mark_top = zFindTopEmptyGen(G, zGenAllocated);
+  G->mark_top = G->has_cyclic_ref ?
+    G->n_gens : zFindTopEmptyGen(G, zGenAllocated);
   // Make a space in minor heap
   if(zMarkGC(G) < 0) return -1;
   G->move_top = zFindTopEmptyGen(G, zGenReachables);

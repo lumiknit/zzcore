@@ -1,6 +1,6 @@
 CC = gcc
 RM = rm
-COPT = -O0 -g2
+COPT = -O2
 N_TESTS = 6
 
 TESTS := $(shell ruby -e "puts (0..$(N_TESTS)).to_a.map{|x| 'test%02d.out' % x}.join ' '")
