@@ -1,5 +1,8 @@
 #!/usr/bin/lua
 
+NAME = "zzcore.min.c"
+VERSION = "0.0.1"
+
 readFile = function(path)
   local f = io.open(path, "rb")
   if f then
@@ -30,8 +33,15 @@ reduce = function(src)
   return src:gsub("\n%s*\n", "\n")
 end
 
+addComments = function(src)
+  hd = "// ----------------------\n// -- " .. NAME .. " " .. VERSION .. "\n"
+  tl = "\n// ----------------------"
+  return hd .. src .. tl
+end
+
 h = readFile("./zzcore.h")
 c = readFile("./zzcore.c")
 t = removeComments(replaceHeader(c, h))
 t = reduce(t)
+t = addComments(t)
 writeFile("zzcore_min.c", t)
