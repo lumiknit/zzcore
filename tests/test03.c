@@ -4,9 +4,10 @@ void test() {
   zp_t ss[3];
   // New GC
   zgc_t *G = zNewGC(3, 32);
+  zSetMajorMinSize(G, 128);
   assert(G != NULL);
   // New Tuples
-  for(int i = 0; i < 100; i++) {
+  for(int i = 0; i < 10000; i++) {
     printf("[INFO] %d-th allocation \n", 1 + i);
     zp_t *p = (zp_t*) zAlloc(G, 0, 2);
     assert(NULL != p);
@@ -14,7 +15,7 @@ void test() {
     if(rand() % 2 == 0) {
       int idx = rand() % 3;
       ss[idx] = p;
-      zRoot(G, idx, p);
+      zGCRoot(G, idx, p);
     }
     if(rand() % 2 == 0) {
       p[0] = ss[rand() % 3];

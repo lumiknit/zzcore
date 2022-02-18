@@ -1,7 +1,7 @@
 CC = gcc
 RM = rm
 COPT = -O0 -g2
-N_TESTS = 4
+N_TESTS = 6
 
 TESTS := $(shell ruby -e "puts (0..$(N_TESTS)).to_a.map{|x| 'test%02d.out' % x}.join ' '")
 
@@ -10,5 +10,8 @@ all: $(TESTS)
 clean:
 	$(RM) *.o *.out
 
-test%.out: tests/test%.c zzcore.c
+test%.out: tests/test%.c zzcore.o
 	$(CC) -o $@ $(COPT) $^
+
+zzcore.o: zzcore.c zzcore.h
+	$(CC) -c $(COPT) $^

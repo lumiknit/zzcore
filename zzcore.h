@@ -36,9 +36,10 @@ int zRunGC(zgc_t*);
 int zFullGC(zgc_t*);
 
 // GC Helpers
-zp_t zRoot(zgc_t*, zu_t, zp_t);
+zp_t zGCRoot(zgc_t*, zu_t /* idx */, zp_t /* new ptr */);
+// Return old roots[idx]; roots[idx] will not change if ptr == 1
 
-int zEnableCyclicRef(zgc_t*, int);
+int zAllowCyclicRef(zgc_t*, int);
 
 // GC Information
 zu_t zNGen(zgc_t*);
