@@ -24,13 +24,13 @@ void test() {
   cb = clock();
   for(k = 0; k < LIST_N; k++) {
     zp_t *l = (zp_t*) zAlloc(G, 1, 1);
-    l[0] = (zp_t) k;
+    //l[0] = (zp_t) k;
     l[1] = zGCTopFrame(G, 0).p;
     zGCSetTopFrame(G, 0, (ztag_t) {.p = l}, 0);
-    if((k & 0xfffff) == 0) {
+    /*if((k & 0xfffff) == 0) {
       printf("- %zu:\n", k);
       zPrintGCStatus(G, NULL);
-    }
+    }*/
   }
   ce = clock();
   printf("[INFO] %lf s elapsed for %zd objects\n",

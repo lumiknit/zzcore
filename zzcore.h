@@ -1,3 +1,5 @@
+/* zzcore.h 0.0.1
+ * author: lumiknit */
 #ifndef __L_ZZCORE_H__
 #define __L_ZZCORE_H__
 
@@ -43,14 +45,14 @@ int zRunGC(zgc_t*);
 int zFullGC(zgc_t*);
 
 // GC root frames
-void zGCPushFrame(zgc_t*, zu_t /* size */);
+void zGCPushFrame(zgc_t*, int /* size */);
 void zGCPopFrame(zgc_t*);
-zu_t zGCTopFrameSize(zgc_t*);
-zu_t zGCBotFrameSize(zgc_t*);
-ztag_t zGCTopFrame(zgc_t*, zu_t /* idx */);
-ztag_t zGCBotFrame(zgc_t*, zu_t /* idx */);
-void zGCSetTopFrame(zgc_t*, zu_t /* idx */, ztag_t /*v*/, zu_t /*is_not_ptr*/);
-void zGCSetBotFrame(zgc_t*, zu_t /* idx */, ztag_t /*v*/, zu_t /*is_not_ptr*/);
+int zGCTopFrameSize(zgc_t*);
+int zGCBotFrameSize(zgc_t*);
+ztag_t zGCTopFrame(zgc_t*, int /* idx */);
+ztag_t zGCBotFrame(zgc_t*, int /* idx */);
+void zGCSetTopFrame(zgc_t*, int /* idx */, ztag_t /*v*/, int /*is_not_ptr*/);
+void zGCSetBotFrame(zgc_t*, int /* idx */, ztag_t /*v*/, int /*is_not_ptr*/);
 
 // Option setter
 void zSetMajorMinSizeGC(zgc_t*, zu_t /* min major heap size */);

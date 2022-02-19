@@ -1,7 +1,8 @@
 #!/usr/bin/lua
 
-NAME = "zzcore.min.c"
+NAME = "zzcore_min.c"
 VERSION = "0.0.1"
+AUTHOR = "lumiknit"
 
 readFile = function(path)
   local f = io.open(path, "rb")
@@ -34,9 +35,11 @@ reduce = function(src)
 end
 
 addComments = function(src)
-  hd = "// ----------------------\n// -- " .. NAME .. " " .. VERSION .. "\n"
+  hd = "// ----------------------\n"
+  nm = "// -- " .. NAME .. " " .. VERSION .. "\n"
+  au = "// -- authour: " .. AUTHOR .. "\n"
   tl = "\n// ----------------------"
-  return hd .. src .. tl
+  return hd .. nm .. au .. src .. tl
 end
 
 h = readFile("./zzcore.h")
