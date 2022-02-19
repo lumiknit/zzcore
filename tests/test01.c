@@ -3,7 +3,7 @@ const char *TEST_NAME = "01. alloc large object w/o full gc";
 void test() {
   // New GC
   zgc_t *G = zNewGC(3, 32);
-  zAllowCyclicRef(G, 1);
+  zAllowCyclicRefGC(G, 1);
   assert(G != NULL);
   // New Large Tuple
   ztup_t *t1 = (ztup_t*) zAlloc(G, 1, 1000);

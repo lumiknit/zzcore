@@ -1,7 +1,6 @@
 #include "test.h"
 const char *TEST_NAME = "04. Run GC";
 void test() {
-  zp_t ss[3];
   // New GC
   zgc_t *G = zNewGC(3, 32);
   assert(G != NULL);

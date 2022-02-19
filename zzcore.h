@@ -9,34 +9,37 @@ typedef uintptr_t zu_t;
 typedef uint8_t zb_t;
 typedef intptr_t zi_t;
 typedef void* zp_t;
-#if UINTPTR_MAX == 0xffffffffffffffff
-#define ZC_SZPTR 8
+#if UINTPTR_MAX >= 0xffffffffffffffff
+#define ZZ_SZPTR 8
   typedef double zf_t;
-#elif UINTPTR_MAX == 0xffffffff
-#define ZC_SZPTR 4
+#elif UINTPTR_MAX >= 0xffffffff
+#define ZZ_SZPTR 4
   typedef float zf_t;
 #else
-  #error Unsupported ptr size
+  #error Unsupported pointer size
 #endif
+#define zBytesToWords(n) (((n) + ZZ_SZPTR - 1) / ZZ_SZPTR)
+#define zWordsToBytes(n) ((n) * ZZ_SZPTR)
 
 typedef union ztag {
+  // Pointer-size integer/float container
   zu_t u; zi_t i; zf_t f; zp_t p;
-  struct ztup *t;
-  int32_t i32[0];
-  int16_t i16[0];
+  struct ztup *t; struct zstr *s;
+  zb_t b[0];
 } ztag_t;
 
 typedef struct zgc zgc_t;
 
-// GC APIs
+// -- GC APIs
 zgc_t* zNewGC(zu_t /* root size */, zu_t /* minor heap size */);
 void zDelGC(zgc_t*);
 
 // Allocation
 zu_t* zAlloc(zgc_t*, zu_t /* # of non-pointer */, zu_t /* # of pointer */);
 
-// Collection
+// RunGC: Make an empty space in minor heap
 int zRunGC(zgc_t*);
+// FullGC: Arrange minor and all major heap
 int zFullGC(zgc_t*);
 
 // GC root frames
@@ -50,14 +53,16 @@ void zGCSetTopFrame(zgc_t*, zu_t /* idx */, ztag_t /*v*/, zu_t /*is_not_ptr*/);
 void zGCSetBotFrame(zgc_t*, zu_t /* idx */, ztag_t /*v*/, zu_t /*is_not_ptr*/);
 
 // Option setter
-void zSetMajorMinSize(zgc_t*, zu_t /* min major heap size */);
-int zAllowCyclicRef(zgc_t*, int);
+void zSetMajorMinSizeGC(zgc_t*, zu_t /* min major heap size */);
+int zAllowCyclicRefGC(zgc_t*, int);
 
 // GC Information
-zu_t zNGen(zgc_t*);
-zu_t zReservedSlots(zgc_t*, int /* idx of gen, -1 for whole slots */);
-zu_t zLeftSlots(zgc_t*, int /* idx of gen, -1 for whold slots */);
-zu_t zAllocatedSlots(zgc_t*, int /* idx of gen, -1 for whold slots */);
+zu_t zGCNGen(zgc_t*); // return # of generations
+// z__Slots: return # of slots(pointers) in the idx-th generation
+// [0] is minor, [n] is n-th major heap
+zu_t zGCReservedSlots(zgc_t*, int /* idx of gen, -1 for whole slots */);
+zu_t zGCLeftSlots(zgc_t*, int /* idx of gen, -1 for whold slots */);
+zu_t zGCAllocatedSlots(zgc_t*, int /* idx of gen, -1 for whold slots */);
 
 // For tests
 void zPrintGCStatus(zgc_t*, zu_t *dst);

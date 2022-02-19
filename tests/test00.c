@@ -14,7 +14,7 @@ void test() {
   t1->tag.i = 16;
   zPrintGCStatus(G, sz);
   // Check size
-  assert(zLeftSlots(G, -1) == 59);
+  assert(zGCLeftSlots(G, -1) == 59);
   // Del GC
   zDelGC(G);
 }

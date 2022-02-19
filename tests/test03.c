@@ -4,7 +4,7 @@ void test() {
   zp_t ss[3];
   // New GC
   zgc_t *G = zNewGC(3, 32);
-  zSetMajorMinSize(G, 128);
+  zSetMajorMinSizeGC(G, 128);
   assert(G != NULL);
   // New Tuples
   for(int i = 0; i < 10000; i++) {

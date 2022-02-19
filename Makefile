@@ -1,7 +1,7 @@
 CC = gcc
 RM = rm -f
-COPT = -O2
-N_TESTS = 7
+COPT = -Wall -O2
+N_TESTS = 8
 
 TESTS := $(shell ruby -e "puts (0..$(N_TESTS)).to_a.map{|x| 'test%02d.out' % x}.join ' '")
 

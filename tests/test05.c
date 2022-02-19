@@ -28,7 +28,7 @@ zgc_t *G;
 int STR_SLOTS = 0;
 char* allocStr(const char *s) {
   const zu_t l = strlen(s) + 1;
-  const zu_t a = (l + ZC_SZPTR - 1) / ZC_SZPTR;
+  const zu_t a = (l + ZZ_SZPTR - 1) / ZZ_SZPTR;
   char *p = (char*) zAlloc(G, a, STR_SLOTS);
   strcpy(p, s);
   p[l - 1] = '\0';
@@ -38,7 +38,7 @@ char* allocStr(const char *s) {
 void test() {
   // New GC
   G = zNewGC(10, 32);
-  zSetMajorMinSize(G, 32);
+  zSetMajorMinSizeGC(G, 32);
   assert(G != NULL);
   // New large one
   printf("[INFO] Alloc hello -> lorem -> aliquam -> lorem -> aliquam\n");

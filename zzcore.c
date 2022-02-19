@@ -43,7 +43,7 @@ typedef struct zgen { // generation structure
   zb_t *s; // stats
   zu_t *p; // value/pointer pools
   // Only for GC
-  zu_t n_reachables, is_calc_reachables;
+  zu_t n_reachables;
   // memory pool for marks and pointers, m ++ p
   zb_t *body;
 } zgen_t;
@@ -77,9 +77,10 @@ typedef struct zgc {
 } zgc_t;
 
 // GC default options
-const static int ZZ_DEFAULT_MINOR_HEAP_SIZE = 1024;
-const static int ZZ_DEFAULT_MAJOR_HEAP_SIZE = 16384;
+const static int ZZ_DEFAULT_MINOR_HEAP_SIZE = 1 << 18; // 256k words
+const static int ZZ_DEFAULT_MAJOR_HEAP_SIZE = 1 << 20; // 1M words
 const static int ZZ_N_GENS = 8;
+const static int ZZ_HEAP_MIN_SIZE = 16;
 
 const static int ZZ_MARK_STK_BOT_SIZE = 256;
 
@@ -102,7 +103,7 @@ static zgen_t* zNewGen(zu_t sz) {
   if(X == NULL || b == NULL) goto L_fail;
   X->size = X->left = sz;
   X->body = (zp_t) b;
-  X->n_reachables = 0, X->is_calc_reachables = 0;
+  X->n_reachables = 0;
   X->m = (zb_t*) b;
   X->s = (zb_t*) (X->m + sz);
   X->p = (zu_t*) (X->m + sz * 2);
@@ -138,32 +139,15 @@ static zu_t* zGenRealloc(zgen_t *X, zu_t sz, zgen_t *src, zu_t off) {
 
 static void zGenCleanMarks(zgen_t *X) {
   memset(X->m + X->left, 0x00, sizeof(zb_t) * (X->size - X->left));
-  X->n_reachables = 0, X->is_calc_reachables = 0;
+  X->n_reachables = 0;
 }
 
 static void zGenCleanAll(zgen_t *X) {
-  zGenCleanMarks(X);
+  memset(X->m + X->left, 0x00, sizeof(zb_t) * (X->size - X->left));
   memset(X->s + X->left, 0x00, sizeof(zb_t) * (X->size - X->left));
   memset(X->p + X->left, 0x00, sizeof(zu_t) * (X->size - X->left));
   X->left = X->size;
-}
-
-static zu_t zGenAllocated(zgen_t *X) {
-  return X->size - X->left;
-}
-
-static zu_t zGenReachables(zgen_t *X) {
-  if(X->is_calc_reachables) return X->n_reachables;
-  zu_t acc = 0, off = X->left;
-  while(off < X->size) {
-    zu_t sz = 1;
-    while(!(X->s[off + sz] & ZZ_SEP)) sz++;
-    if((X->m[off] & ZZ_COLOR) != ZZ_WHITE) acc += sz;
-    off += sz;
-  }
-  X->n_reachables = acc;
-  X->is_calc_reachables = 1;
-  return acc;
+  X->n_reachables = 0;
 }
 
 static zi_t zGenPtrIdx(zgen_t *X, zp_t p) {
@@ -188,7 +172,7 @@ static zframe_t* zNewFrame(zu_t sz, zframe_t *prev) {
   f->size = sz;
   f->prev = prev;
   f->s = (zb_t*) (f + 1);
-  f->v = (zp_t*) (f->s + sz);
+  f->v = (ztag_t*) (f->s + sz);
   return f;
 }
 
@@ -198,7 +182,7 @@ zgc_t* zNewGC(zu_t sz_roots, zu_t sz_minor) {
   zgen_t **gens = (zgen_t**) malloc(sizeof(zgen_t*) * ZZ_N_GENS);
   zframe_t *bot_frame = zNewFrame(sz_roots, NULL);
   zp_t *stk = (zp_t*) malloc(sizeof(zp_t) * ZZ_MARK_STK_BOT_SIZE);
-  if(sz_minor <= 16) sz_minor = ZZ_DEFAULT_MINOR_HEAP_SIZE;
+  if(sz_minor <= ZZ_HEAP_MIN_SIZE) sz_minor = ZZ_DEFAULT_MINOR_HEAP_SIZE;
   zgen_t *minor = zNewGen(sz_minor);
   if(!G || !gens || !bot_frame || !stk || !minor) goto L_fail;
   memset(gens, 0x00, sizeof(zgen_t*) * ZZ_N_GENS);
@@ -235,14 +219,15 @@ void zDelGC(zgc_t *G) {
 }
 
 // Option setter
-void zSetMajorMinSize(zgc_t *G, zu_t msz) {
-  if(msz >= 16) G->major_heap_min_size = msz;
+void zSetMajorMinSizeGC(zgc_t *G, zu_t msz) {
+  if(msz >= ZZ_HEAP_MIN_SIZE) G->major_heap_min_size = msz;
 }
 
 // Allocation
 zu_t* zAlloc(zgc_t *G, zu_t np, zu_t p) {
+  zgen_t * const minor = G->gens[0];
   // Check very large chunk required
-  if(np + p >= G->gens[0]->size) {
+  if(np + p >= minor->size) {
     zu_t k;
     if(!G->has_cyclic_ref && p > 0) {
       // If cyclic is not allowed and there is ref part,
@@ -267,10 +252,10 @@ zu_t* zAlloc(zgc_t *G, zu_t np, zu_t p) {
     return zGenAlloc(J, np, p);
   }
   // Try to allocate in minor heap
-  zu_t *ptr = zGenAlloc(G->gens[0], np, p);
+  zu_t *ptr = zGenAlloc(minor, np, p);
   if(ptr != NULL) return ptr;
   if(zRunGC(G) < 0) return NULL;
-  return zGenAlloc(G->gens[0], np, p);
+  return zGenAlloc(minor, np, p);
 }
 
 // Collection
@@ -333,11 +318,12 @@ static int zMarkPropagate(zgc_t *G, zp_t p) {
       J->m[idx] |= ZZ_BLACK;
       // Traverse all references from p
       zu_t off = 0;
+      zu_t kf = G->has_cyclic_ref ? 0 : j;
       do {
         if(!(J->s[idx + off] & ZZ_NPTR)) { // Ignore non-pointer slots
           // Find generation & index of ref
           zu_t k;
-          for(k = 0; k < G->mark_top; k++) {
+          for(k = kf; k < G->mark_top; k++) {
             zgen_t * const K = G->gens[k];
             const zi_t idy = zGenPtrIdx(K, (zp_t) J->p[idx + off]);
             // Check ref is not visited
@@ -350,7 +336,8 @@ static int zMarkPropagate(zgc_t *G, zp_t p) {
               break;
         } } }
       } while(!(J->s[idx + (++off)] & ZZ_SEP));
-      break;
+      J->n_reachables += off;
+      return 0;
   } }
   return 1;
 }
@@ -374,11 +361,19 @@ static int zMarkGC(zgc_t *G) {
   return 0;
 }
 
-static zu_t zFindTopEmptyGen(zgc_t *G, zu_t (*sizeCalc)(zgen_t*)) {
+static zu_t zFindTopEmptyGenByAlloc(zgc_t *G) {
   zu_t k = G->gc_target;
-  zu_t acc = sizeCalc(G->gens[k++]);
-  for(; k < G->n_gens && acc < G->gens[k]->left; k++)
-    acc += sizeCalc(G->gens[k]);
+  zu_t acc = G->gens[k]->size - G->gens[k]->left;
+  for(k++; k < G->n_gens && acc > G->gens[k]->left; k++)
+    acc += G->gens[k]->size - G->gens[k]->left;
+  return k;
+}
+
+static zu_t zFindTopEmptyGenByReachable(zgc_t *G) {
+  zu_t k = G->gc_target;
+  zu_t acc = G->gens[k++]->n_reachables;
+  for(; k < G->n_gens && acc > G->gens[k]->left; k++)
+    acc += G->gens[k]->n_reachables;
   return k;
 }
 
@@ -397,7 +392,9 @@ static int zReallocGenGC(zgc_t *G, zgen_t *dst, zgen_t *src) {
       src->p[off] = (zu_t) n;
     }
     off += sz;
-} }
+  }
+  return 0;
+}
 
 static zp_t zFindNewPointer(zgc_t *G, zp_t ptr) {
   zu_t k;
@@ -429,50 +426,55 @@ static int zMoveGC(zgc_t *G) {
   // Find destination gen. to copy
   zgen_t *dst;
   zi_t bot = G->gc_target, top = G->move_top;
-  zi_t gap = top - bot;
   if(top >= G->n_gens) {
     zu_t sz = 0;
-    for(k = bot; k < top; k++) {
-      sz += zGenReachables(G->gens[k]);
-    }
+    for(k = bot; k < top; k++) sz += G->gens[k]->n_reachables;
     sz *= 2;
     if(sz < G->major_heap_min_size) sz = G->major_heap_min_size;
-    dst = zNewGen(sz);
-    if(dst == NULL) return -1;
+    if((dst = zNewGen(sz)) == NULL) return -1;
+    if(top >= G->sz_gens) {
+      G->gens = realloc(G->gens, sizeof(zgen_t**) * (G->sz_gens << 1));
+      G->sz_gens <<= 1;
+    }
+    G->gens[top] = dst;
+    G->n_gens++;
   } else dst = G->gens[top];
   // Reallocate (copy)
   for(j = top - 1; j >= (zi_t) bot; j--) {
     if(zReallocGenGC(G, dst, G->gens[j]) < 0) return -1;
   }
   // Change all reallocated pointers
-  zu_t jf = 0, jt = top;
-  if(G->has_cyclic_ref) jt = G->n_gens;
-  for(j = jf; j < bot; j++) zGenUpdatePointers(G, G->gens[j]);
+  const zu_t jt = G->has_cyclic_ref ? G->n_gens : top + 1;
+  for(j = 0; j < bot; j++) zGenUpdatePointers(G, G->gens[j]);
   for(j = top; j < jt; j++) zGenUpdatePointers(G, G->gens[j]);
-  if(top >= G->n_gens) zGenUpdatePointers(G, dst);
   zUpdateRootPointers(G);
-  // Clean up gens
+  // Clean up generations
   for(k = 0; k < bot; k++) zGenCleanMarks(G->gens[k]);
-  for(k = (k == 0) ? 1 : k; k < top; k++) zDelGen(G->gens[k]);
+  for(; k < top; k++) zGenCleanAll(G->gens[k]);
   for(; k < G->n_gens; k++) zGenCleanMarks(G->gens[k]);
-  if(bot == 0) {
-    zGenCleanAll(G->gens[0]);
-    bot++; gap--;
+  return 0;
+}
+
+static int zReduceEmptyGC(zgc_t *G) {
+  zu_t k;
+  zu_t total = 0, allocated = 0;
+  for(k = 1; k < G->n_gens; k++) {
+    total += G->gens[k]->size;
+    allocated += G->gens[k]->size - G->gens[k]->left;
   }
-  // Remove copied generations
-  if(top >= G->n_gens) { // When alive objs are copied into new gen
-    if(bot >= G->sz_gens) {
-      G->gens = realloc(G->gens, sizeof(zgen_t**) * (G->sz_gens << 1));
-      G->sz_gens <<= 1;
+  for(k = G->n_gens - 1; k >= 1 && total > allocated * 4; k--) {
+    if(G->gens[k]->left == G->gens[k]->size) {
+      total -= G->gens[k]->size;
+      zDelGen(G->gens[k]);
+      G->gens[k] = NULL;
     }
-    G->gens[bot] = dst;
-    G->n_gens = bot + 1;
-  } else { // When alive objs are copied into existing gen
-    for(k = bot; k + gap < G->n_gens; k++) {
-      G->gens[k] = G->gens[k + gap];
-    }
-    G->n_gens -= gap;
   }
+  zu_t d = 0;
+  for(k = 1; k < G->n_gens; k++) {
+    if(G->gens[k] == NULL) d++;
+    else G->gens[k - d] = G->gens[k];
+  }
+  G->n_gens -= d;
   return 0;
 }
 
@@ -482,11 +484,11 @@ int zRunGC(zgc_t *G) {
   // Set-up mark levels
   G->gc_target = 0;
   G->mark_top = G->has_cyclic_ref ?
-    G->n_gens : zFindTopEmptyGen(G, zGenAllocated);
+    G->n_gens : zFindTopEmptyGenByAlloc(G);
   // Make a space in minor heap
   if(zMarkGC(G) < 0) return -1;
-  G->move_top = zFindTopEmptyGen(G, zGenReachables);
-  if(zMoveGC(G) < 0) return -1;
+  G->move_top = zFindTopEmptyGenByReachable(G);
+  if(zMoveGC(G) < 0 || zReduceEmptyGC(G) < 0) return -1;
   ++G->n_collection;
   return 0;
 }
@@ -495,7 +497,8 @@ int zFullGC(zgc_t *G) {
   // Copy all memories into a single major gen.
   G->gc_target = 0;
   G->mark_top = G->move_top = G->n_gens;
-  if(zMarkGC(G) < 0 || zMoveGC(G) < 0) return -1;
+  if(zMarkGC(G) < 0 || zMoveGC(G) < 0 || zReduceEmptyGC(G) < 0)
+    return -1;
   ++G->n_collection;
   return 0;
 }
@@ -532,7 +535,7 @@ void zGCSetBotFrame(zgc_t *G, zu_t idx, ztag_t v, zu_t is_nptr) {
   G->bot_frame->s[idx] = is_nptr ? ZZ_NPTR : 0;
 }
 
-int zAllowCyclicRef(zgc_t *G, int v) {
+int zAllowCyclicRefGC(zgc_t *G, int v) {
   if(v > 0) { // ENABLE cyclic reference
     G->has_cyclic_ref = 1;
     return 1;
@@ -550,7 +553,7 @@ int zAllowCyclicRef(zgc_t *G, int v) {
 zu_t zNGen(zgc_t *G) {
   return G->n_gens;
 }
-zu_t zReservedSlots(zgc_t *G, int idx) {
+zu_t zGCReservedSlots(zgc_t *G, int idx) {
   if(idx < -1 || idx >= (int)G->n_gens) return 0;
   if(idx >= 0) return G->gens[idx]->size;
   size_t sum = 0;
@@ -558,7 +561,7 @@ zu_t zReservedSlots(zgc_t *G, int idx) {
     sum += G->gens[idx]->size;
   return sum;
 }
-zu_t zLeftSlots(zgc_t *G, int idx) {
+zu_t zGCLeftSlots(zgc_t *G, int idx) {
   if(idx < -1 || idx >= (int)G->n_gens) return 0;
   if(idx >= 0) return G->gens[idx]->left;
   size_t sum = 0;
@@ -566,16 +569,16 @@ zu_t zLeftSlots(zgc_t *G, int idx) {
     sum += G->gens[idx]->left;
   return sum;
 }
-zu_t zAllocatedSlots(zgc_t *G, int idx) {
-  return zReservedSlots(G, idx) - zLeftSlots(G, idx);
+zu_t zGCAllocatedSlots(zgc_t *G, int idx) {
+  return zGCReservedSlots(G, idx) - zGCLeftSlots(G, idx);
 }
 
 // For tests
 void zPrintGCStatus(zgc_t *G, zu_t *dst) {
   zu_t arr[4];
   if(dst == NULL) dst = arr;
-  dst[0] = zReservedSlots(G, -1); dst[1] = zLeftSlots(G, -1);
-  dst[2] = zReservedSlots(G, 0); dst[3] = zLeftSlots(G, 0);
+  dst[0] = zGCReservedSlots(G, -1); dst[1] = zGCLeftSlots(G, -1);
+  dst[2] = zGCReservedSlots(G, 0); dst[3] = zGCLeftSlots(G, 0);
   printf("GC Stat (%p, %" PRIuPTR " gens) [alloc(%%) / left(%%) / total]\n",
     G, G->n_gens);
   zu_t t = dst[0], l = dst[1];
@@ -585,7 +588,7 @@ void zPrintGCStatus(zgc_t *G, zu_t *dst) {
     a, 100 * (double) a / t, l, 100 * (double) l / t, t);
   zu_t k;
   for(k = 0; k < G->n_gens; k++) {
-    t = zReservedSlots(G, k), l = zLeftSlots(G, k);
+    t = zGCReservedSlots(G, k), l = zGCLeftSlots(G, k);
     a = t - l;
     printf(
       "* [%" PRIuPTR "]: %" PRIuPTR "(%.2lf%%) / %"
@@ -602,7 +605,7 @@ ztup_t *zAllocTup(zgc_t *G, zu_t tag, zu_t dim) {
 }
 
 zstr_t *zAllocStr(zgc_t *G, zu_t len) {
-  zu_t sz = 2 + len / ZC_SZPTR;
+  zu_t sz = 2 + len / ZZ_SZPTR;
   zstr_t *s = (zstr_t*) zAlloc(G, sz, 0);
   s->len = len;
   s->c[0] = s->c[len] = '\0';
